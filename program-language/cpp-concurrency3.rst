@@ -693,16 +693,353 @@ Transferring mutex ownership between scopes
         do_something();
     }
 
-因为lk是函数中生成的自动变量，因此会被直接返回；编译器会自动执行move构造函数。
+因为lk是函数中生成的自动变量，因此会被直接返回；编译器会自动执行move构造函数，而不需要显式调用 `std::move` 。
+`get_lock` 中锁定了mutex，进行 `prepare_data` ，之后将拥有mutex的所有权直接传递给 `process_data` ，后者将mutex用 `std::unique_lock` 进行管理，并继续在mutex的保护下，完成 `do_something` 操作。
+在这两个操作期间，是没有其他线程能够干涉其运行的。
 
-page79
+这个模式适用于，mutex需要依赖当前程序运行的状态决定是否锁定，
+或者，当成一个参数传入一个返回 `std::unique_lock` 对象的函数。
+这样的一个使用实例是，程序并不会直接返回锁，而是返回一个协议类对象，
+来保证对某些共享数据的加锁保护。
+在这种情况下，任何需要访问共享数据的程序都必须通过这个协议类的对象。
+当你结束访问了，则销毁这个对象，那么锁被打开，其他线程就能够访问共享数据了。
+这样一个协议类的对象最好是支持move操作的（这样，它能够被函数返回），
+同时类中的锁成员元素也需要支持move.
+
+`std::unique_lock` 的灵活性也体现在，允许实例在它们被destroy之前，通过 `unlock` 操作放弃他们的锁。
+`std::unique_lock` 支持 `lock, unlock, try_lock` 等基本操作，也使得它能够支持 `std::lock` 。
+在 `std::unque_lock` 对象销毁前unlock一个锁意味着，你能够在锁不需要的时候自己手工解锁，这个会很大地提高性能。
+
+Locking at an appropriate granularity
+````````````````````````````````````````````
+锁的粒度就是mutex保护的数据的大小。
+
+一个粒度适当的锁会保护少量的数据，而一个粒度粗略的锁会保护大量数据。
+不光选择锁的粒度来保护需要保护的数据很重要，而且需要确保只在需要保护的操作上用锁。
+
+比如，在超市购物时，选购商品是可以并行的，而结账是需要排队的。
+如果在选购商品上用一个全局锁，让大家排队购物，那么这个规定真心不爽。
+
+如果多个线程在等待操作同一个资源，那么任何一个线程，如果持有锁期间做了一些不必要的操作，那么总体上多线程花费的时间会增长。
+
+所以，只在真正需要锁mutex的时候锁定；尝试将任何数据处理的工作在锁外进行。
+尤其需要注意的是，当持有锁的时候，不要做耗时较多的操作，比如I/O。
+I/O操作要比内存中读写要慢至少上百倍，同样的时间应该允许其他线程做更多计算的工作。
+所以，除非锁真的是用于保护文件的操作，否则不要在I/O期间持有锁，并尽量将其他类似耗时的操作移出锁保护的范围，留给多线程并发计算尽可能多的机会。
+
+`std::unique_lock` 能够很好地处理上面的情况，因为当你不再需要锁的时候，可以手动 `unlock()` ，当你在后面的代码中又需要锁定了，那么 `lock()` 之，非常灵活：
+
+.. code-block:: c++
+    :linenos:
+
+    void get_and_process_data()
+    {
+        std::unque_lock<std::mutex> my_lock(the_mutex);
+        some_class data_to_process = get_next_data_chunk();
+        my_lock.unlock();   // 下面处理数据阶段不需要锁定
+        result_type result = process(data_to_process);
+        my_lock.lock();     // 下面需要锁定来写入结果
+        write_result(data_to_process, result);
+    }
+
+你不需要在整个 `process()` 期间都锁定mutex，这个跟 `lock_guard` 比较起来就有优势了。
+
+如果你可以只用一个mutex来保护整个数据结构，
+那么不光对于锁的竞争会增多，而且，压缩被锁定的时间也变得很难。
+更多的操作需要等待同一个锁，所以锁被锁定的相对时间会增长，这个也更加凸现了锁粒度选择的重要性。
+
+就像例子里展现的，所谓的适当的锁粒度，表示的不光是被锁保护的数据的大小，而且锁定期间所就行操作的耗时大小也是重要的考量。
+** 总的来说，一个锁在就行具体操作时，需要尽可能压缩被锁定的时间** 。
+这也就是说，除了必须，耗时的工作，比如I/O操作，或者获取另外一个锁（即使不会死锁）也不要在锁定期间就行。
+
+之前有一个swap的例子，需要同时锁定两个数据结构的mutex。
+然后再进行比较。 
+如果此时需要比较的数据仅仅是两个int呢？ 复制int的代价是很低的。
+你可以在持有两个锁的时候，简单地复制下两个值，然后释放锁，进行后续的比较操作。
+这也就意味着，你缩减了持有锁的时间。
+
+下面是一个简单的实现：
+
+**Listing 3.10 Locking one mutex at a time in a comparison operator**
+
+.. code-block:: c++
+    :linenos:
+
+    class Y
+    {
+    private:
+        int some_detail;
+        mutable std::mutex m;
+
+        int get_detail() const
+        {
+            std::lock_guard<std::mutex> lock_a(m);
+            return some_detail;
+        }
+    public:
+        Y(int sd) : some_detail(sd) { }
+
+        friend bool operator== (Y const& lhs, Y const& rhs)
+        {
+            if(&lhs == &rhs)
+                return true;
+            int const lhs_value = lhs.get_detail();
+            int const rhs_value = rhs.get_detail();
+            return lhs_value == rhs_value;
+        }
+    };
+
+上面的代码首先分别持有锁复制了两个值（两个锁不需要同时锁定，有更好的异步性），然后在无锁的状态下就行比较然后返回结果。
+这个改变在类型复制代价小的情况下能够缩减锁定时间，但是弊端是，它彻底改变了comparison的语义。
+
+现在的两个锁是先后锁定，而且锁定操作并没有持续到整个比较操作的整个过程。
+这样结果仅仅是两个值在不同时间的比较，也许在复制操作后，原始值被修改，但是后续的操作依旧采用旧的值就行比较。 整个操作的意义与原始的方法相比，发生了彻底的改变。
+
+所以，当就行这些优化措施时，需要确保不修改原始操作的语义。
+
+**如果你不在操作的整个过程锁定，那么持续就会暴露到race conditions的危险当中**
+
+Alternative facilities for protecting shared data
+++++++++++++++++++++++++++++++++++++++++++++++++++++
+尽管mutex是最通用的机制，但对于保护共享数据，它并不是唯一的选择。
+
+对于具体的情况，需要具体分析。
+
+Protecting shared data during initialization
+```````````````````````````````````````````````
+假设，你有一个共享数据，但是它在初始化的时候耗时巨多，也许是一个数据库连接，或者一些内存分配。
+`Lazy initialization` 就像在单线程代码中普遍使用的——每个访问此资源的操作都会检测下，资源是否已经被初始化了。
+
+.. code-block:: c++
+    :linenos:
+
+    std::shared_ptr<some_resource> resource_ptr;
+    void foo()
+    {
+        if(!resource_ptr)
+        {
+            resource_ptr.reset(new some_resource);
+        }
+        resource_ptr->do_something();
+    }
+
+如果共享数据的并行访问是安全的，那么剩下需要多线程保护的部分就是初始化了。
+将上面的代码直接转化成多线程，会使得并行的访问被互斥化，整体的访问就变成序列化而不是并行访问了。
+这是因为，每个线程在检测资源是否已经被初始化时，需要锁定一个mutex。
+
+**Listing 3.11 Thread-safe lazy initialization using a mutex**
+
+.. code-block:: c++
+    :linenos:
+
+    std::shared_ptr<some_resource> resource_ptr;
+    std::mutex resource_mutex;
+    void foo()
+    {
+        std::unique_lock<std::mutex> lk(resource_mutex);
+        if(!resource_ptr)
+        {
+            resource_ptr.reset(new some_resource);
+        }
+        lk.unlock();
+        resource_ptr->do_something();
+    }
+
+这个代码够简单，但是因为互斥检测，存在严重的性能问题。
+为此，后来人提出了声名狼藉的 `Double-Checked Locking` 模式：
+像下面的代码里一样，先无锁读取指针，只当指针是 `NULL` 的时候锁定。
+指针在锁定lock之后，还会继续就行一次检测(这也就是所谓Double-Checked)以防止另外的线程在第一次检测和锁定期间已经就行了初始化。
+
+.. code-block:: c++
+    :linenos:
+
+    void undefined_behaviour_with_double_checked_locking()
+    {
+        if(!resource_ptr)
+        {
+            std::lock_guard<std::mutex> lk(resource_mutex);
+            if(!resource_ptr)
+            {
+                resource_ptr.reset(new some_resource);
+            }
+        }
+        resource_ptr->do_something();
+    }
+
+不幸的是，这个模式是万恶的，因为它有潜在的race conditions问题。
+因为，一个线程在锁外的读操作和另外一个线程在锁内的写操作(初始化)并没有方法同步。
+这也就在指针及其指向对象之间产生了一个race conditions.
+
+即使一个线程看到了 `resource_ptr` 被其他线程初始化（过去式还是进行时是个问题），此线程会直接进行 `resource_ptr->do_something()` ，而不管初始化的工作是否已经完毕。
+再啰嗦一下，
+如果这个过程中，初始化工作正在进行，那么其余的线程会以为初始化工作已经完成（ `!resource_ptr` 为 true），从而读取了未完全初始化的共享数据。
+这是个未定义的行为。
+
+C++标准库也认为这是个重要的场景，所以提供了 `std::once_flag` 和 `std::call_once` 来处理这个场景。
+不同于锁定一个锁，然后检测指针，每个线程都可以调用 `std::call_once` ，并且会安全地知道目标指针是否已经被其他线程成功初始化了。
+所以，应该在实际中类似的场景使用。
+
+下面是对之前的代码用 `std::call_once` 的重写：
+
+.. code-block:: c++
+    :linenos:
+
+    std::shared_ptr<some_resource> resource_ptr;
+    std::once_flag resource_flag;
+
+    void init_resource()
+    {
+        resource_ptr.reset(new some_resource);
+    }
+
+    void foo()
+    {
+        std::call_once(resource_flag, init_resource);   // init_resource 只会被运行一次
+        resource_ptr->do_something();
+    }
+
+在这个例子里， `std::once_flag` 和需要被初始化的共享数据都是一段范围内的命名对象。 
+但是 `std::call_once()` 也可以被用于类成员，如下所示：
+
+**Listing 3.12 Thread-safe lazy initialization of a class member using std::call_once**
+
+.. code-block:: c++
+    :linenos:
+
+    class X
+    {
+    private:
+        connection_info connection_details;
+        connection_handle connection;
+        std::once_flag connection_init_flag;
+
+        void open_connection()
+        {
+            connection  = connection_manager.open(connection_details);
+        }
+    public:
+        X(connection_info const& connection_details_):
+            connection_details(connection_details_)
+        {}
+        void send_data(data_packet const& data)
+        {
+            // 类似 std::bind的构造函数，this指针需要传入
+            std::call_once(connection_init_lag, &X::open_connection, this);
+            connection.send_data(data);
+        }
+        data_packet receive_data()
+        {
+            std::call_once(connection_init_flag, &X::open_connection, this);
+            return connection.receive_data();
+        }
+    };
+
+值得注意的是，和 `std::mutex` 类似， `std::once_flag` 是不能被复制和move的。
+
+有潜在race conditions问题的初始化操作的场景如下，
+有一个被声明为 `static` 的局部变量。 
+对这个变量的初始化被定义在它首次声明出现的地方；
+对于多线程调用这个函数，这也意味着，有race conditions出现的隐患。
+在C++11之前的C++编译器在实际中都是有问题的，因为有可能不止一个线程认为它自己是最早运行这段代码，而且有义务进行初始化。
+在C++11中，这个问题被解决了： 
+初始化过程只能在一个线程中进行，而且其他线程只能在初始化工作完毕后才能继续往后执行。
+这样，就没有race conditions隐患了。
+
+在实际应用中，当需要一个全局的实例时，  `static` 模式可以作为 `std::call_once` 的替代。
+
+下面的代码是没有问题的：
+
+.. code-block:: c++
+    :linenos:
+
+    class my_class;
+    my_class& get_my_class_instance()
+    {
+        static my_class instance;   // 这里static对象的初始化是线程安全的
+        return instance;
+    }
+
+Protecting rarely updated data structures
+``````````````````````````````````````````````
+考虑一个DNS表，表中的记录可能好几年都不会有变化。
+但是，为了保持记录的有效性，记录还是要定期检查的，
+比较，偶尔还是可能有一些变化。
+
+尽管少有更新，但是仍旧有可能发生。
+而且，如果多个线程访问缓存，那么还是需要数据保护来防止线程访问到过期的数据。
+
+没有专用的数据结构来支撑这个需求，
+更新的时候需要就行更新操作的线程对数据结构独占操作。
+一旦修改完毕，多线程又可以安全地并行地读取数据结构了。
+使用一个 `std::mutex` 来保护数据结构是有一些问题的，因为它会消除数据结构读取时的并行性。
+这里需要一种新的mutex，称作 `reader-writer` mutex，因为它允许两种不同的使用：
+writer间互斥，reader间并行。
+
+C++标准库并没有直接提供这样一个mutex。 但你可以使用 `boost::shared_mutex` 。 
+对于更新操作， `std::lock_guard<boost::shared_mutex>` 和 `std::unique_lock<boost::shared_mutex>` 都可以被用作锁。
+那些不需要更新数据结构的线程可以使用 `boost::shared_lock<boost::shared_mutex>` 来获取共享的访问。
+这个和 `std::unque_lock` 的使用方法相似，只是同事可以有多个线程共享锁定同一个 `boost::shared_mutex` 。 
+唯一的约束就是，如果任何一个线程有一个共享的锁，任何尝试获取独占锁的线程都会被阻塞，直到所有其他线程都解锁了，类似地，如果任何一个线程有一个独占锁，任何其他的线程均无法获取共享锁或者独占锁，直到那个线程释放了锁。
+
+下面的例子给定了DNS缓存的实现，采用 `std::map` 来保存缓存，用 `boost::shared_mutex` 来保护共享数据。
+
+**Listing 3.13 Protecting a data structure with a boost::shared_mutex**
+
+.. code-block:: c++
+    :linenos:
+
+    #include <map>
+    #include <string>
+    #include <mutex>
+    #include <boost/thread/shared_mutex.hpp>
+
+    class dns_entry;
+
+    class dns_cache
+    {
+        std::map<std::string, dns_entry> entries;
+        mutable boost::shared_mutex entry_mutex;
+    public:
+        dns_entry find_entry(std::string const& domain) const
+        {
+            // 共享锁
+            // 多个reader可以并行运行
+            boost::shared_lock<boost::shared_mutex> lk(entry_mutex);
+            std::map<std::string,dns_entry>::const_iterator const it =
+                entries.find(domain);
+            return (it == entries.end()) ? dns_entry() : it->second;
+        }
+        void update_or_add_entry(std::string const& domain,
+                    dns_entry const& dns_details)
+        {
+            // 互斥/独占锁 只能互斥运行
+            std::lock_guard<boost::shared_mutex> lk(entry_mutex);
+            entries[domain] = dns_details;
+        }
+    };
 
 
+References
+-----------
+CPP Currency in Action 第三章
 
 
+.. raw:: html
 
-
-
-
-    
+    <!-- 多说评论框 start -->
+    <div class="ds-thread" data-thread-key="cpp-concurrency3.rst" data-title="CPP Currency in Action note(3)  Sharing data between threads" data-url="http://superjom.duapp.com/program-language/cpp-concurrency3.html"></div>
+    <!-- 多说评论框 end -->
+    <!-- 多说公共JS代码 start (一个网页只需插入一次) -->
+    <script type="text/javascript">
+    var duoshuoQuery = {short_name:"superjom"};
+    (function() {
+            var ds = document.createElement('script');
+                    ds.type = 'text/javascript';ds.async = true;
+                            ds.src = (document.location.protocol == 'https:' ? 'https:' : 'http:') + '//static.duoshuo.com/embed.unstable.js';
+                                    ds.charset = 'UTF-8';
+                                            (document.getElementsByTagName('head')[0] 
+                                                     || document.getElementsByTagName('body')[0]).appendChild(ds);
+                                                })();
+    </script>
+    <!-- 多说公共JS代码 end -->
 
