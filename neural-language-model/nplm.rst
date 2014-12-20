@@ -140,6 +140,7 @@ NPLM解决纬度灾难的方法就是，分布式表示：
 为了保证一段上文下，所有的候选的概率和为1（任何词都可能成为候选），神经网络的softmax层的计算如下：
 
 .. math::
+    :label: softmax
 
     \hat{P}(w_t | w_{t-1}, \cdots, w_{t-n+1}) = \frac{e^{y_{w_t}}}
     {\sum_i e^{e^{y_i}}}
@@ -152,12 +153,42 @@ NPLM解决纬度灾难的方法就是，分布式表示：
     
     y = b + Wx + U \tanh (d+ Hx)
 
-其中， :math:`Wx` 是图形中的输入层向输出层的直接连同， 如果不需要，可以将 :math:`W` 中所有值都设为0 。
+其中， :math:`Wx` 是图形中的输入层向输出层的直接联通， 如果不需要，可以将 :math:`W` 中所有值都设为0 。
 而 :math:`U\tanh(d+Hx)` 就是经典的以tanh作为激活函数神经网络的输出计算。
+:math:`b` 是全局bias。
 :math:`x` 是固定长度的输入词序列特征向量：
 
 .. math::
 
     x = (C(w_{t-1}), C(w_{t-2}), \cdots, C(w_{t-n+1}))
 
+随机梯度下降计算
+------------------
+基于 \eqref{softmax} 来修改对数似然的形式：
 
+.. math::
+
+    \log \hat{P}(w_t | w_{t-1}, \cdots, w_{t-n+1})
+    = y^{w_t} - \log \sum_i e^{y_i}
+
+更新函数是：
+
+.. math::
+
+    \theta \leftarrow \theta + 
+        \varepsilon 
+        \frac{ \partial \log \hat{P}(w_t | w_{t-1}, \cdots, w_{t-n+1})}
+        {\partial \theta}
+
+其中偏导方面的计算是
+
+.. math::
+
+    \frac{ \partial \log \hat{P}(w_t | w_{t-1}, \cdots, w_{t-n+1})}
+        {\partial \theta}
+    = \frac{ \partial y^{w_t}}
+        {\partial \theta}
+
+这里化简到这个形式，只是为了说明 \eqref{softmax} 中那个恐怖的分母并不会影响到具体的梯度更新这一块。
+但是，在具体计算个概率时，每次对不同的context，都需要单独计算一次softmax的分母(整个词库范围)，这个损耗是非常大的。
+    
