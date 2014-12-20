@@ -1,5 +1,5 @@
 CPP Currency in Action note(4) Synchronizing concurrnet operation
-===================================================================
+********************************************************************
 .. sectionauthor:: Superjom <yanchunwei {AT} outlook.com>
 
 *2014-12-17*
@@ -18,7 +18,7 @@ C++标准库中提供了线程协同的工具，比如 `condition variables` 和
 在这个章节，我们将会讨论如何利用 `condition variables` 和 `futures` 来等待事件，或者如何使用他们来简化协同操作。
 
 Waiting for an event or other condition
----------------------------------------------
+=============================================
 想象你夜里坐一辆火车，不想坐过站。
 一种方式是整夜醒着，并且留意火车到哪儿了，但是你会很累。
 当然，你也可以查看下列车时刻表，查下列车到站时间，定下闹钟。
@@ -353,7 +353,7 @@ Listing 4.3中的具体接口如下：
 在这个场景下， 一个 `future` 也许更加适合。
 
 Waiting for one-off events with futures
-------------------------------------------
+===========================================
 假设你坐飞机去度假。 
 一旦你来到机场，在完成了各种手续之后，你坐在座位上等待登机的通知。
 你也许有很多方式来打发等待的时间，比如读书看报玩手机啥的，
@@ -560,7 +560,7 @@ Parsing tasks between threads
 这个例子使用 `std::packaged_task<void()>` 来封装任务，具体的操作可以是不接收参数和返回数据的函数或可调用对象。
 
 Making (std::)promises
-**************************
+-------------------------------
 当你有一个需要处理大量网络连接的应用，
 那么用单独的线程来处理每个连接比较简单，因为这样可以使网络交互更加容易实现。
 这个模式在连接比较少的时候比较适用，
@@ -591,22 +591,22 @@ Listing 4.10 展示了线程处理连接的例子。
     
     void process_connections(connection_set& connections)
     {
-        while(!done(connections))
+        while(!done(connections))   // 循环 直到处理完毕
         {
             for(connection_iterator
                     connection = connections.begin(), 
                     end = connections.end();
                 connection != end;
-                ++condition)
+                ++condition)    // 循环处理所有的连接
             {
-                if(connection->has_incomming_data())
+                if(connection->has_incomming_data())  // 处理接收的数据
                 {
                     data_packet data = connection->incoming();
                     std::promise<payload_type>& p
                         = connection->get_promise(data.id);
                     p.set_value(data.payload);
                 }
-                if(connection->has_outgoing_data())
+                if(connection->has_outgoing_data())  // 处理要发出的数据
                 {
                     outgoing_packet data = 
                         connection->top_of_outgoing_queue();
@@ -616,5 +616,164 @@ Listing 4.10 展示了线程处理连接的例子。
             }
         }
     }
+
+Saving an exception for the future
+------------------------------------
+考虑下面的一小段代码。 
+如果你给 `square_root()` 传递-1，那么就会抛出一个异常：
+
+.. code-block:: c++
+    :linenos:
+
+    double square_root(double x)
+    {
+        if(x < 0) 
+        {
+            throw std::out_of_range("x<0");
+        }
+        return sqrt(x);
+    }
+
+现在想象你不是从当前的线程触发异常：
+
+.. code-block:: c++
+    :linenos:
+
+    double y = square_root(-1);
+
+你采用异步调用：
+
+.. code-block:: c++
+    :linenos:
+
+    std::future<double> f = std::async(square_root, -1);
+    double y = f.get();
+
+如果异步执行和单线程执行的行为相同，那是比较合理的。
+就像 y 得到了函数调用的结果，如果调用 `f.get()` 的线程也能看到异常，那么就非常好了。
+
+这就是具体的工作方式： 
+如果异步的函数调用抛出了异常，那么这个异常就会被存储到future的数值空间中，然后future的状态被设置为完毕，调用 `get()` 会抛出存储的异常。
+
+如果你用 `std::packaged_task` 封装函数，那么异常的行为也是一致的。当函数抛出异常，那么future对象会将异常存储到对应的数据空间，并且将future的状态设置为完毕。后面调用 `get()` 的线程会抛出异常。
+
+自然， `std::promise` 也提供了相似的机制。
+如果你希望存储一个异常而不是一个值，你调用 `set_exception()` 成员函数，而不是 `set_value()` 。 
+这个可以在 `catch` 语句段中使用：
+
+.. code-block:: c++
+    :linenos:
+
+    extern std::promise<double> some_promise;
+    
+    try
+    {
+        some_promise.set_value(calculate_value());
+    }
+    catch(...)
+    {
+        some_promise.set_exception(std::current_exception());
+    }
+
+这段代码使用 `std::current_exception()` 来取得抛出的异常；
+也可以使用 `std::copy_exception()` 来不抛出异常而直接存储一个新的异常。
+
+.. code-block:: c++
+
+    some_promise.set_exception(std::copy_exception(std::logic_error("foo ")));
+
+这样就比使用一对 `try/catch` 语句段要清爽很多了，这种方式应该有限采用，因为它能够使得编译器有机会提前优化代码。
+
+然而， `std::future` 也有它的限制，就是只有一个线程能够等待结果。
+如果你需要等待多个线程的同一个事件，你需要使用 `std::shared_future` 来代替。
+
+Waiting from multiple threads
+--------------------------------
+尽管 `std::future` 能够很好地应付两个线程间的数据传递。
+但是 `std::future` 不能用于向多个线程传递数据，因为其存储的结果数据理论上只能使用一次，而且并没有多线程协同的功能。
+因为 `std::future` 是只能move的，所以，其结果只能被一个线程获得。
+
+如果你需要让多个线程等待同一个事件，那么可以使用 `std::shared_future` 。
+`std::shared_future` 是可以复制的，所以你可以有多个对象来获取同一个状态。
+
+现在，有了 `std::shared_future` ， 在一个单独对象上的成员函数依旧是为非同步的，所以为了避免多线程访问一个对象带来的data races，你必须用一个锁就行保护。
+推荐的方法是，单独复制一个对象，然后每个线程操作自己的那个副本。
+
+`std::shared_future` 的一个潜在的使用就是对一个电子表格的并行处理；
+每个单元里都有一个最终值，这个值可能被其他单元里的公式用到。
+在相互依赖的单元中，可以使用一个 `std::shared_future` 来引用第一个单元。
+如果不同的单元中的公式并行运行，那些不需要依赖或者依赖的值可访问的话，任务会并行起来。 否则，对于那些依赖的其他值没有完毕的，会暂时阻塞。
+
+引用某些同步状态的 `std::shared_future` 的实例是从 引用那些状态的 `std::future` 构造而来。
+因为 `std::future` 对象不能将状态的所有权共享给其他对象，因此所有权必须被move给 `std::shared_future` ，之后， `std::future` 的状态便被清空。
+
+.. code-block:: c++
+    :linenos:
+
+    std::promise<int> p;
+    std::future<int> f(p.get_future());
+    assert(f.valid());
+    std::shared_future<int> sf(std::move(f));   // 所有权被move传递
+    assert(!f.valid());
+    assert(sf.valid());
+
+就像对其他可以move的对象，所有权的传递对rvalue是透明的，
+所以，你可以直接从 `std::promise` 对象的 `get_future()` 的返回值中直接构建一个 `std::shared_future` 对象。
+
+比如：
+
+.. code-block:: c++
+    :linenos:
+
+    std::promise<std::string> p;
+    std::shared_future<std::string> sf(p.get_future()); // rvalue的透明move
+
+这里，所有权的传递是隐含的。 
+
+`std::shared_future<>` 是从 `std::future<std::string>` 返回的rvalue直接构造出来的。
+
+`std::future` 有一个 `share()` 成员函数来创建一个新的 `std::shared_future` 对象，而且将所有权直接move给它。
+这个比较方便：
+
+.. code-block:: c++
+    :linenos:
+
+    std::promise< std::map< SomeIndexType, SomeDataType, 
+            SomeComparator, SomeAllocator>::iterator> p;
+    auto sf = p.get_future().share();
+
+在这个例子里， `sf` 的类型被推断为 `std::promise< std::map< SomeIndexType, SomeDataType, SomeComparator, SomeAllocator>::iterator>` 。
+如果map的comparator或者allocator被修改了，你只需要修改promise的类型，而future的类型会自动更新。
+
+Waiting with a time limit
+==============================
+在之前介绍的future里，只要future的状态没有完毕，那么等待的时间都可能变成无限。
+但很多情况下，我们都需要有一个时间观念，比如，在长时间的等待中，定期发送一个 `I's still alive` 的状态，或者限定一个最长时间后自动退出。
+
+有两类你可以指定的时间：
+
+1. 一个 `duration-based` 超时， 当你在一个固定长度的时间内等待（比如30s）
+2. 一个 `absolute` 超时，你可以等到一个特定的时间点 （比如，2月15号17点30分）
+
+绝大多数的wait函数都对应着提供了两类变种，用不同的后缀来表示，一个有 `_for` 后缀，另外一个是 `_until` 后缀。
+
+比如， `std::condition_variable` 有两个wait扩展： `wait_for` 和 `wait_until` ，在固定的时间内被唤醒且等待的条件成立，又或者超时了都会返回。
+
+在我们具体查看这两个函数实现的细节之前，首先来看下C++标准库中的时间定义。 
+首先是 clock。
+
+Clocks
+-------
+根据C++标准库，clock就是一个时间的信息源。
+具体来说，clock是一个类，它提供了四类截然不同的信息：
+
+* 时间 `now`
+* 表示时间的类型
+* 时间周期
+* clock是否以标准的时间周期运行，是否是一个稳定的时钟
+
+clock现在的时间可以通过调用clock类的静态成员函数 `now()` 获得；
+比如， `std::chrono::system_clock::now()` 会返回系统时钟的当前时间。
+特定clock的时刻类型被typedef为 `time_point` ，所以， `some_clock::now()` 的返回类型是 `some_clock::time_point` 。
 
 
