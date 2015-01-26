@@ -192,3 +192,28 @@ NPLM解决纬度灾难的方法就是，分布式表示：
 
 这里化简到这个形式，只是为了说明 \eqref{softmax} 中那个恐怖的分母并不会影响到具体的梯度更新这一块。
 但是，在具体计算个概率时，每次对不同的context，都需要单独计算一次softmax的分母(整个词库范围)，这个损耗是非常大的。
+
+References
+-----------
+Yoshua Bengio，Réjean Ducharme，Pascal Vincent，Christian Janvin. A neural probabilistic language model
+
+
+.. raw:: html
+
+    <!-- 多说评论框 start -->
+    <div class="ds-thread" data-thread-key="nplm.rst" data-title="A Neural Probabilistic Language Model (Bengio 2003)" data-url="http://superjom.duapp.com/neural-language-model/nplm.html"></div>
+    <!-- 多说评论框 end -->
+    <!-- 多说公共JS代码 start (一个网页只需插入一次) -->
+    <script type="text/javascript">
+    var duoshuoQuery = {short_name:"superjom"};
+    (function() {
+            var ds = document.createElement('script');
+                    ds.type = 'text/javascript';ds.async = true;
+                            ds.src = (document.location.protocol == 'https:' ? 'https:' : 'http:') + '//static.duoshuo.com/embed.unstable.js';
+                                    ds.charset = 'UTF-8';
+                                            (document.getElementsByTagName('head')[0] 
+                                                     || document.getElementsByTagName('body')[0]).appendChild(ds);
+                                                })();
+    </script>
+    <!-- 多说公共JS代码 end -->
+

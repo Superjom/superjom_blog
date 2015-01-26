@@ -5,7 +5,11 @@
 
 .. toctree::
    :maxdepth: 2
-
+    
+   mapreduce.rst
+   cpp-concurrency3.rst
+   cpp-concurrency2.rst
+   cpp-concurrency.rst
    zeromq02.rst
    zeromq01.rst
    strcmp-memcpy.rst

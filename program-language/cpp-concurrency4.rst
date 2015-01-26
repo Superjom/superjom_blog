@@ -776,4 +776,131 @@ clock现在的时间可以通过调用clock类的静态成员函数 `now()` 获�
 比如， `std::chrono::system_clock::now()` 会返回系统时钟的当前时间。
 特定clock的时刻类型被typedef为 `time_point` ，所以， `some_clock::now()` 的返回类型是 `some_clock::time_point` 。
 
+时钟的单位周期被设置为1秒的分数比例。 
+如果一个时钟一秒走25下，那么它就有一个 `std::ratio<1, 25>` 的单位周期，
+而一个2.5秒走一下的单位周期就是 `std::ratio<5, 2>` .
+如果一个时钟的单位周期需要在运行时确定，或者后面需要被调节，
+那么其周期应该设置为一个平均值，或者最小单位。
 
+如果一个时钟以标准周期运行，并且不能被调整，
+那么这个时钟就被称为一个稳定的时钟。
+对于稳定时钟，静态成员数据 `is_steady` 会返回 true， 否则返回false。
+特定地， `std::chrono::system_clock` 不会是steady，因为它的时钟周期是可以被调节的。 
+这样的调节可能会使现在调用的 `now()` 的结果比先前调用 `now()` 得到的结果还要早，这样无疑是违背客观规律的。
+时钟的稳定性在计算超时是很重要的，所以C++标准库提供了一个稳定的时钟： `std::chrono::steady_clock` 。
+
+C++标准库提供的其它时钟包括：
+
+* `std::chrono::system_clock` ， 代表了系统的真实时间，并且提供了 `time_t` 值与时刻之间互相转换的函数
+* `std::chrono::high_resolution_clock` ，提供了最小的时刻周期
+
+这些时钟都被定义在 `<chrono>` 头文件中。 
+
+Durations
+----------
+持续时间是时间支持的最简单的部分；
+它们被类模板 `std::chrono::duration<>` 来定义。
+第一个模板参数是表示类型（比如 int, long, double），
+第二个模板参数表示时钟周期。
+比如，一个用short表示分钟数的持续时间表示为： `std::chrono::duration<short, std::ratio<60,1>>` ，
+因为一分钟有60秒。
+在另一方面，一个用double来表示毫秒数的持续时间表示为 `std::chrono::duration<double, std::ratio<1, 1000>>` ，
+因为每一毫秒是 1/1000 秒。
+
+标准库在命名空间 `std::chrono` 中提供了一些现成的类型， 
+
+* nanosechonds
+* microseconds
+* milliseconds
+* seconds
+* minutes
+* hours
+
+持续时间之间的转换是隐含的。 
+显式的转换可以用 `std::chrono::duration_cast<>` 来来实现。
+
+.. code-block:: c++
+    :linenos:
+
+    std::chrono::milliseconds ms(54802);
+    std::chrono::seconds s = 
+        std::chrono::duration_cast<std::chrono::seconds> (ms);
+
+结果会被截断，而不是四舍五入，所以在这个例子里，s最终为54.
+
+时间间隔支持数学运算，
+所以你可以在时间间隔间加减，或者乘除有一个常数。
+因此， `5 * seconds(1)` 就和 `seconds(5)` 或者 `minites(1) - seconds(55)` 相同。
+时间单位的个数可以通过 `count()` 操作获得。 因此， `std::chrono::milliseconds(1234).count()` 的值是 1234.
+
+基于时间间隔的wait可以使用 `std::chrono::duration<>` 来实现。
+比如，你可以等待35毫秒来使future的状态变成完毕：
+
+.. code-block:: c++
+    :linenos:
+
+    std::future<int> f = std::async(some_task);
+    if(f.wait_for(std::chrono::milliseconds(35)) == std::future_status::ready)
+        do_something_with(f.get());
+
+wait函数会返回一个状态，来标明或者等待超时，或者等待的事件发生。
+在这种情况下，你在等待一个future，所以如果超时了，函数会返回 `std::future_status::timeout` ，
+如果处理完毕，会返回 `std:future_status::ready` ，
+如果future的任务被推迟了，会返回 `std::future_status:deferred` 。
+等待的超时使用内部的一个稳定的时钟来计算的，所以35毫秒表示过去35毫秒，即使时钟周期被改变了，时间间隔的长度也不会发生变化。
+当然，由于系统调度或者系统时钟的精确度问题，时间的时间可能会比35毫秒长。
+
+Time points
+---------------
+时刻是由 `std::chrono::time_point<>` 类模板的对象来表示的，
+它的第一个模板参数表示使用那种时钟，
+第二个木板参数是具体的时间单位。
+时刻的数值是从某个称为时钟原点的特定的时刻开始的时间的长度，
+时钟原点是一个基本的性质，而C++标准库中不能直接查询或者设定。
+典型的时钟原点代表1970年1月1号0时0刻。
+不同的时钟间可以共享时钟原点，或者设置独立的时钟原点。
+尽管你不能直接查询时钟原点的时间，但是，你可以通过 `time_since_epoch()` 来得到时间原点到某个指定的 `time_point` 的时间长度。
+
+比如，你指定了一个时刻 `std::chrono::time_point<std::chrono::system_clock, std::chrono::minutes>` 。
+这个将会得到一个相对于系统时钟的原点，并用分钟来表示的时钟（时刻）。
+
+你可以增加或者减少时间间隔，所以 `std::chrono::high_resolution_clock::now() + std::chrono::nanoseconds(500)` 将会给你一个未来500纳秒后的时刻。
+
+你可以通过两个相同时钟类型的时刻之间相减来得到之间的间隔。 
+这个有助于计算一段代码运行的时间：
+
+.. code-block:: c++
+    :linenos:
+
+    auto start = std::chrono::high_resolution_clock::now();
+    do_something();
+    auto stop = std::chrono::high_resolution_clock::now();
+    std::cout << "do_something() took "
+            << std::chrono::duration<double, std::chrono:seconds> (stop - start).count()
+            << " seconds" << std::endl;
+
+**Listing 4.11 Waiting for a condition variable with a timeout**
+
+.. code-block:: c++
+    :linenos:
+
+    #include <condition_variable>
+    #include <mutex>
+    #include <chrono>
+
+    std::condition_variable cv;
+    bool done;
+    std::mutex m;
+
+    bool wait_loop()
+    {
+        auto const timeout = std::chrono::steady_clock::now() + 
+            std::chrono::milliseconds(500);
+        std::unique_lock<std::mutex> lk(m);
+        while(!done)
+        {
+            if(cv.wait_until(lk.timeout) == std::cv_status::timeout)
+                break;
+        }
+        return done;
+    }

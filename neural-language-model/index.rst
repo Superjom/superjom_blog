@@ -12,6 +12,7 @@ Contents:
 .. toctree::
    :maxdepth: 2
 
+   nplm.rst
    word2vec.rst
    word2vec-implement.rst
    word2vec-implement2.rst

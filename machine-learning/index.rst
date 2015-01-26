@@ -5,6 +5,7 @@
 .. toctree::
    :maxdepth: 2
 
+   ml-taiwan-note2.rst
    gradient-check.rst
    bias_and_variance.rst
    fm_kl.rst
