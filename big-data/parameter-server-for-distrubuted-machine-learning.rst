@@ -1,12 +1,14 @@
 Parameter Server for Distributed Machine Learning
 =====================================================
+.. sectionauthor:: Superjom <yanchunwei {AT} outlook.com>
+
+*2014-02-18*
 
 .. note::
 
     本篇博文来自百度李沐的一篇同题论文。
-
-    关于参数服务器，之前在实习的时候接触过，看了一段时间的源码。
-    后面，自己的毕设也是这个方向，所以需要系统性地积累一些信息。
+    本来是要做笔记，写完发现只是大概翻译了一下。
+    目前自己也在写一个参数服务器，也许很多细节需要探索和借鉴，所有后续会有多一些的内容。
 
 大体结构
 ---------
@@ -91,11 +93,11 @@ Risk minimization by distributed subgradient iterations
 3. 在计算中，server端不断汇总来自不同client的更新，向访问参数的client回复更新后的参数
 
 Risk minimization by parameter synchronization
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
++++++++++++++++++++++++++++++++++++++++++++++++++
 client端存储一块本地的参数，并且通过参数服务器来实现参数协同。
 
 Distributed Gibbs Sampler
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
++++++++++++++++++++++++++++++++++++++++++++++++++
 用Gibbs计算LDA时，涉及到三个矩阵：
 
 * document-word 矩阵
@@ -108,7 +110,7 @@ Distributed Gibbs Sampler
 第三个word-topic的全局矩阵被维护在server节点端，client在计算过程中更新此矩阵。
 
 Deep Learning
-^^^^^^^^^^^^^^^^
++++++++++++++++++++++++++++++++++++++++++++++++++
 Deep Learing本质上就是执行几类非线性的函数。
 
 其中涉及到互相依赖的变量，以及对大数据的分布式并行处理。
@@ -185,6 +187,55 @@ Consistency Model
 
 Elastic Scalability and Fault Tolerance
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+共享数据采用key-value对的格式。
+
+包括key-value对和server节点均会被插入到一个哈希环中。
+
+.. image:: ../_static/image/parameter-server-hash-ring.png
+    :align: center
+
+其中，每个节点会负责维护的参数范围是，其在哈希环中的起点到下个节点的起点。
+
+在上面的图中，每个server节点会负责同一颜色的参数部分。
+
+框架中使用了DHT(分布式哈希表)，并且将key到节点的映射信息存储在Zookeeper中的Paxos算法中。
+
+为了负载均衡，每个物理节点会在哈希环中插入 :math:`\log p` 个虚拟节点。
+
+每个参数段会在哈希环中 :math:`k` 个逆时针的相邻的server节点中存储副本以实现容错。
+如果 :math:`k=1` ，则这部分参数会在逆时针相邻的一个server节点上保存副本。
+然后，当一个节点失效时，它的服务会被其最近的server节点提供。
+当恢复一个节点时，只需要在失效节点的位置插入一个新的节点，然后从其相邻的server节点将之前的那部分数据恢复过来。
 
 
+.. note::
+
+    论文后面的理论分析会专门在新一篇博客里添加
+    很多细节不是特别清楚，估计需要看源码了。
+
+    项目具体信息可以参照 http://www.parameterserver.org/
+
+
+
+References
+-----------
+
+Li M, Zhou L, Yang Z, et al. Parameter server for distributed machine learning[C]//Big Learning NIPS Workshop. 2013.
+
+
+.. raw:: html
+
+    <script>window._bd_share_config={"common":{"bdSnsKey":{},"bdText":"","bdMini":"2","bdMiniList":["qzone","tsina","weixin","renren","tqq","sqq","hi","youdao"],"bdPic":"","bdStyle":"0","bdSize":"16"},"slide":{"type":"slide","bdImg":"5","bdPos":"left","bdTop":"159"}};with(document)0[(getElementsByTagName('head')[0]||body).appendChild(createElement('script')).src='http://bdimg.share.baidu.com/static/api/js/share.js?v=89860593.js?cdnversion='+~(-new Date()/36e5)];</script>
+
+
+.. raw:: html
+
+    <!-- 多说评论框 start -->
+    <div class="ds-thread" data-thread-key="cpp-concurrency4.rst" data-title=" Parameter Server for Distributed Machine Learning" data-url="http://superjom.duapp.com/big-data/parameter-server-for-distrubuted-machine-learning.html"></div>
+    <!-- 多说评论框 end -->
+    <!-- 多说公共JS代码 start (一个网页只需插入一次) -->
+    <script type="text/javascript">
+    var duoshuoQuery = {short_name:"superjom"};
+    (function() { var ds = document.createElement('script'); ds.type = 'text/javascript';ds.async = true; ds.src = (document.location.protocol == 'https:' ? 'https:' : 'http:') + '//static.duoshuo.com/embed.unstable.js'; ds.charset = 'UTF-8'; (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(ds); })(); </script>
+    <!-- 多说公共JS代码 end -->
 

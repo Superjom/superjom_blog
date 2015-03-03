@@ -5,6 +5,7 @@
 .. toctree::
    :maxdepth: 2
 
+   parameter-server-for-distrubuted-machine-learning.rst
    reservoir-sampling.rst
    sort-as-match.rst
    burst.rst

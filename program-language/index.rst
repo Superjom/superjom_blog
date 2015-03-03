@@ -6,6 +6,7 @@
 .. toctree::
    :maxdepth: 2
     
+   cpp-concurrency4.rst
    mapreduce.rst
    cpp-concurrency3.rst
    cpp-concurrency2.rst
