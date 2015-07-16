@@ -10,4 +10,5 @@
    sort-as-match.rst
    burst.rst
    large-url-sort.rst
+   swiftsnails.rst
 

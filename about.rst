@@ -1,9 +1,11 @@
 About Me
 =========
 
-这是 Supejom 的博客，构建于Sphinx-python。
+这是 Supejom 的博客，构建于Sphinx-python，目前部署于百度云(duapp.com)。
 
-此人2012年起在北京大学攻读硕士，研究方向是搜索引擎与网络数据挖掘。
+我2012年硕士毕业于北大，研究方向是搜索引擎与网络数据挖掘。
+
+目前在Baidu作计算广告相关工作。
 
 sina微博： @Superjom 
 

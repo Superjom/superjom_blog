@@ -225,19 +225,11 @@ server.conf::
 * 规划好参数的数据结构，参数里面不要std::vector这类动态列表（会占用额外的内存和计算时间），尽可能简单
 * 本地多线程，这是必须的
 
-
-
-
-.. toctree::
-   :maxdepth: 2
-
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
-
-
+依赖库
+--------
+* C++11 
+* ZeroMQ-4.0.5
+* glog-0.3.3
+* google-sparsehash-2.0.2
+* gtest-1.7
+* zlib
